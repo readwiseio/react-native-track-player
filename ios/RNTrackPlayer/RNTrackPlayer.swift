@@ -149,8 +149,9 @@ public class RNTrackPlayer: RCTEventEmitter, AudioSessionControllerDelegate {
         if let bufferDuration = config["minBuffer"] as? TimeInterval {
             player.bufferDuration = bufferDuration
         }
-
-
+if let maxBufferDuration = config["maxBuffer"] as? TimeInterval {
+            player.maxBufferDuration = maxBufferDuration
+        }
         // configure wether player waits to play (deprecated)
         if let waitForBuffer = config["waitForBuffer"] as? Bool {
             player.automaticallyWaitsToMinimizeStalling = waitForBuffer

@@ -63,10 +63,10 @@
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
-    "url": "https://github.com/doublesymmetry/react-native-track-player.git"
+    "url": "https://github.com/readwiseio/react-native-track-player.git"
   },
   "bugs": {
-    "url": "https://github.com/doublesymmetry/react-native-track-player/issues"
+    "url": "https://github.com/readwiseio/react-native-track-player/issues"
   },
   "peerDependencies": {
     "react": ">=16.8.6",
