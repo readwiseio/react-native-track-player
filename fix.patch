@@ -1,0 +1,255 @@
+diff --git a/android/build.gradle b/android/build.gradle
+index 3d9af49..fad8503 100644
+--- a/android/build.gradle
++++ b/android/build.gradle
+@@ -60,6 +60,7 @@ dependencies {
+     // Make sure we're using androidx
+     implementation "androidx.core:core-ktx:1.8.0"
+     implementation "androidx.localbroadcastmanager:localbroadcastmanager:1.1.0"
++    implementation "androidx.lifecycle:lifecycle-extensions:2.0.0"
+     implementation "com.orhanobut:logger:2.2.0"
+     implementation "org.jetbrains.kotlinx:kotlinx-coroutines-core:1.6.3"
+ }
+diff --git a/android/src/main/java/com/doublesymmetry/trackplayer/module/MusicModule.kt b/android/src/main/java/com/doublesymmetry/trackplayer/module/MusicModule.kt
+index 2e1b223..ae471bf 100644
+--- a/android/src/main/java/com/doublesymmetry/trackplayer/module/MusicModule.kt
++++ b/android/src/main/java/com/doublesymmetry/trackplayer/module/MusicModule.kt
+@@ -1,9 +1,14 @@
+ package com.doublesymmetry.trackplayer.module
+ 
+ import android.content.*
++import android.os.Build
+ import android.os.Bundle
+ import android.os.IBinder
+ import android.support.v4.media.RatingCompat
++import androidx.annotation.RequiresApi
++import androidx.lifecycle.Lifecycle
++import androidx.lifecycle.LifecycleObserver
++import androidx.lifecycle.OnLifecycleEvent
+ import androidx.localbroadcastmanager.content.LocalBroadcastManager
+ import com.doublesymmetry.kotlinaudio.models.Capability
+ import com.doublesymmetry.kotlinaudio.models.RepeatMode
+@@ -27,12 +32,14 @@ import javax.annotation.Nonnull
+ /**
+  * @author Milen Pivchev @mpivchev
+  */
+-class MusicModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaModule(reactContext), ServiceConnection {
++class MusicModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaModule(reactContext), ServiceConnection,
++    LifecycleObserver {
+     private var eventHandler: MusicEvents? = null
+     private var playerOptions: Bundle? = null
+     private var isServiceBound = false
+     private var playerSetUpPromise: Promise? = null
+     private val scope = MainScope()
++    private var isForeground = false
+ 
+     private lateinit var musicService: MusicService
+ 
+@@ -127,6 +134,20 @@ class MusicModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaM
+         return constants
+     }
+ 
++    @OnLifecycleEvent(Lifecycle.Event.ON_STOP)
++    fun onAppBackgrounded() {
++        //App in background
++//        println("MusicService --> App in background")
++        isForeground = false
++    }
++
++    @OnLifecycleEvent(Lifecycle.Event.ON_START)
++    fun onAppForegrounded() {
++        // App in foreground
++//        println("MusicService --> App in foreground")
++        isForeground = true
++    }
++
+     @ReactMethod
+     fun setupPlayer(data: ReadableMap?, promise: Promise) {
+         if (isServiceBound) {
+@@ -179,9 +200,21 @@ class MusicModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaM
+         val manager = LocalBroadcastManager.getInstance(context)
+         eventHandler = MusicEvents(context)
+         manager.registerReceiver(eventHandler!!, IntentFilter(EVENT_INTENT))
+-
+         Intent(context, MusicService::class.java).also { intent ->
+-            context.startService(intent)
++            try {
++                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
++                    if (isForeground) {
++                        // prevent crash Fatal Exception: android.app.RemoteServiceException$ForegroundServiceDidNotStartInTimeException
++                        context.startForegroundService(intent)
++                    }
++//                println("MusicService --> startService")
++                } else {
++                    context.startService(intent)
++                }
++            } catch (e: Exception) {
++                e.printStackTrace();
++            }
++            
+             context.bindService(intent, this, Context.BIND_AUTO_CREATE)
+         }
+     }
+diff --git a/android/src/main/java/com/doublesymmetry/trackplayer/service/MusicService.kt b/android/src/main/java/com/doublesymmetry/trackplayer/service/MusicService.kt
+index cc3e9bf..80fcbdb 100644
+--- a/android/src/main/java/com/doublesymmetry/trackplayer/service/MusicService.kt
++++ b/android/src/main/java/com/doublesymmetry/trackplayer/service/MusicService.kt
+@@ -1,6 +1,8 @@
+ package com.doublesymmetry.trackplayer.service
+ 
+-import android.app.PendingIntent
++import android.annotation.TargetApi
++import android.app.*
++import android.content.Context
+ import android.content.Intent
+ import android.os.Binder
+ import android.os.Build
+@@ -8,6 +10,10 @@ import android.os.Bundle
+ import android.os.IBinder
+ import android.support.v4.media.RatingCompat
+ import androidx.annotation.MainThread
++import androidx.annotation.NonNull
++import androidx.core.app.NotificationCompat
++import androidx.core.app.NotificationCompat.PRIORITY_LOW
++import androidx.lifecycle.*
+ import androidx.localbroadcastmanager.content.LocalBroadcastManager
+ import com.doublesymmetry.kotlinaudio.models.*
+ import com.doublesymmetry.kotlinaudio.models.NotificationButton.*
+@@ -30,11 +36,12 @@ import kotlinx.coroutines.flow.flow
+ import java.util.concurrent.TimeUnit
+ 
+ @MainThread
+-class MusicService : HeadlessJsTaskService() {
++class MusicService : HeadlessJsTaskService(), LifecycleObserver {
+     private lateinit var player: QueuedAudioPlayer
+     private val binder = MusicBinder()
+     private val scope = MainScope()
+     private var progressUpdateJob: Job? = null
++    private var isForeground = false
+ 
+     var stoppingAppPausesPlayback = true
+         private set
+@@ -53,6 +60,7 @@ class MusicService : HeadlessJsTaskService() {
+ 
+     val event get() = player.event
+ 
++    val MUSIC_NOTIFICATION_ID = 1
+     private var latestOptions: Bundle? = null
+     private var capabilities: List<Capability> = emptyList()
+     private var notificationCapabilities: List<Capability> = emptyList()
+@@ -60,9 +68,41 @@ class MusicService : HeadlessJsTaskService() {
+ 
+     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+         startTask(getTaskConfig(intent))
++
++        // Fix crash Context.startForegroundService() did not then call Service.startForeground()
++        // within 5s by creating empty notification then stop later.
++        // Sets the service to foreground with an empty notification
++        try {
++            val notification = getNotification()
++            startForeground(MUSIC_NOTIFICATION_ID, notification)
++            // stops the service right after.
++            stopForeground(true)
++
++        } catch (e: Exception) {
++            e.printStackTrace();
++        }
+         return START_STICKY
+     }
+ 
++    override fun onCreate() {
++        super.onCreate()
++        ProcessLifecycleOwner.get().lifecycle.addObserver(this)
++    }
++
++    @OnLifecycleEvent(Lifecycle.Event.ON_STOP)
++    fun onAppBackgrounded() {
++        //App in background
++//        println("MusicService --> App in background")
++        isForeground = false
++    }
++
++    @OnLifecycleEvent(Lifecycle.Event.ON_START)
++    fun onAppForegrounded() {
++        // App in foreground
++//        println("MusicService --> App in foreground")
++        isForeground = true
++    }
++
+     @MainThread
+     fun setupPlayer(playerOptions: Bundle?) {
+         val bufferConfig = BufferConfig(
+@@ -80,11 +120,15 @@ class MusicService : HeadlessJsTaskService() {
+                 true
+         )
+ 
+-        val automaticallyUpdateNotificationMetadata = playerOptions?.getBoolean(AUTO_UPDATE_METADATA, true) ?: true
++        if (this::player.isInitialized) {
++            print("Player was initialized. Prevent re-initializing again")
++        } else {
++            val automaticallyUpdateNotificationMetadata = playerOptions?.getBoolean(AUTO_UPDATE_METADATA, true) ?: true
+ 
+-        player = QueuedAudioPlayer(this@MusicService, playerConfig, bufferConfig, cacheConfig)
+-        player.automaticallyUpdateNotificationMetadata = automaticallyUpdateNotificationMetadata
+-        observeEvents()
++            player = QueuedAudioPlayer(this@MusicService, playerConfig, bufferConfig, cacheConfig)
++            player.automaticallyUpdateNotificationMetadata = automaticallyUpdateNotificationMetadata
++            observeEvents()
++        }
+     }
+ 
+     @MainThread
+@@ -195,6 +239,35 @@ class MusicService : HeadlessJsTaskService() {
+         return compactCapabilities.contains(capability)
+     }
+ 
++    private fun getNotification(): Notification? {
++        val channel: String = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) createChannel() else {
++                ""
++            }
++        val mBuilder =
++            NotificationCompat.Builder(this, channel)
++                .setSmallIcon(R.mipmap.ic_launcher)
++        return mBuilder
++            .setPriority(PRIORITY_LOW)
++            .setCategory(Notification.CATEGORY_SERVICE)
++            .build()
++    }
++
++    @NonNull
++    @TargetApi(26)
++    @Synchronized
++    private fun createChannel(): String {
++        val mNotificationManager: NotificationManager =
++            this.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
++        val name = "fake_audio_channel"
++        val mChannel = NotificationChannel(name, name, NotificationManager.IMPORTANCE_LOW)
++        if (mNotificationManager != null) {
++            mNotificationManager.createNotificationChannel(mChannel)
++        } else {
++            stopSelf()
++        }
++        return name;
++    }
++
+     @MainThread
+     fun add(track: Track) {
+         add(listOf(track))
+@@ -375,10 +448,15 @@ class MusicService : HeadlessJsTaskService() {
+             event.notificationStateChange.collect {
+                 when (it) {
+                     is NotificationState.POSTED -> {
+-                        startForeground(it.notificationId, it.notification)
++//                        println("MusicService --> startForegroundService notificationId=${it.notificationId} isForeground=${isForeground}")
++                        if (isForeground && it.notificationId == MUSIC_NOTIFICATION_ID) {
++                            startForeground(it.notificationId, it.notification)
++                        }
+                     }
+                     is NotificationState.CANCELLED -> {
+-                        stopForeground(true)
++                        if (isForeground && it.notificationId == MUSIC_NOTIFICATION_ID) {
++                            stopForeground(true)
++                        }
+                     }
+                 }
+             }

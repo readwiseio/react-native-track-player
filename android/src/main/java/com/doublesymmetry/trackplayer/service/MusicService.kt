@@ -1,6 +1,8 @@
 package com.doublesymmetry.trackplayer.service
 
-import android.app.PendingIntent
+import android.annotation.TargetApi
+import android.app.*
+import android.content.Context
 import android.content.Intent
 import android.os.Binder
 import android.os.Build
@@ -8,6 +10,10 @@ import android.os.Bundle
 import android.os.IBinder
 import android.support.v4.media.RatingCompat
 import androidx.annotation.MainThread
+import androidx.annotation.NonNull
+import androidx.core.app.NotificationCompat
+import androidx.core.app.NotificationCompat.PRIORITY_LOW
+import androidx.lifecycle.*
 import androidx.localbroadcastmanager.content.LocalBroadcastManager
 import com.doublesymmetry.kotlinaudio.models.*
 import com.doublesymmetry.kotlinaudio.models.NotificationButton.*
@@ -30,11 +36,12 @@ import kotlinx.coroutines.flow.flow
 import java.util.concurrent.TimeUnit
 
 @MainThread
-class MusicService : HeadlessJsTaskService() {
+class MusicService : HeadlessJsTaskService(), LifecycleObserver {
     private lateinit var player: QueuedAudioPlayer
     private val binder = MusicBinder()
     private val scope = MainScope()
     private var progressUpdateJob: Job? = null
+    private var isForeground = false
 
     var stoppingAppPausesPlayback = true
         private set
@@ -53,6 +60,7 @@ class MusicService : HeadlessJsTaskService() {
 
     val event get() = player.event
 
+    val MUSIC_NOTIFICATION_ID = 1
     private var latestOptions: Bundle? = null
     private var capabilities: List<Capability> = emptyList()
     private var notificationCapabilities: List<Capability> = emptyList()
@@ -60,7 +68,37 @@ class MusicService : HeadlessJsTaskService() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         startTask(getTaskConfig(intent))
+
+        // Fix crash Context.startForegroundService() did not then call Service.startForeground()
+        // within 5s by creating empty notification then stop later.
+        // Sets the service to foreground with an empty notification
+        try {
+            val notification = getNotification()
+            startForeground(MUSIC_NOTIFICATION_ID, notification)
+            // stops the service right after.
+            stopForeground(true)
+
+        } catch (e: Exception) {
+            e.printStackTrace();
+        }
         return START_STICKY
+    }
+
+    override fun onCreate() {
+        super.onCreate()
+        ProcessLifecycleOwner.get().lifecycle.addObserver(this)
+    }
+
+    @OnLifecycleEvent(Lifecycle.Event.ON_STOP)
+    fun onAppBackgrounded() {
+        //App in background
+        isForeground = false
+    }
+
+    @OnLifecycleEvent(Lifecycle.Event.ON_START)
+    fun onAppForegrounded() {
+        // App in foreground
+        isForeground = true
     }
 
     @MainThread
@@ -80,11 +118,16 @@ class MusicService : HeadlessJsTaskService() {
                 true
         )
 
-        val automaticallyUpdateNotificationMetadata = playerOptions?.getBoolean(AUTO_UPDATE_METADATA, true) ?: true
+        // SOURCE: https://github.com/doublesymmetry/react-native-track-player/issues/1666#issuecomment-1481534212
+        if (this::player.isInitialized) {
+            print("Player was initialized. Prevent re-initializing again")
+        } else {
+            val automaticallyUpdateNotificationMetadata = playerOptions?.getBoolean(AUTO_UPDATE_METADATA, true) ?: true
 
-        player = QueuedAudioPlayer(this@MusicService, playerConfig, bufferConfig, cacheConfig)
-        player.automaticallyUpdateNotificationMetadata = automaticallyUpdateNotificationMetadata
-        observeEvents()
+            player = QueuedAudioPlayer(this@MusicService, playerConfig, bufferConfig, cacheConfig)
+            player.automaticallyUpdateNotificationMetadata = automaticallyUpdateNotificationMetadata
+            observeEvents()
+        }
     }
 
     @MainThread
@@ -193,6 +236,36 @@ class MusicService : HeadlessJsTaskService() {
 
     private fun isCompact(capability: Capability): Boolean {
         return compactCapabilities.contains(capability)
+    }
+
+    // SOURCE: https://github.com/doublesymmetry/react-native-track-player/issues/1666#issuecomment-1481534212
+    private fun getNotification(): Notification? {
+        val channel: String = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) createChannel() else {
+                ""
+            }
+        val mBuilder =
+            NotificationCompat.Builder(this, channel)
+                .setSmallIcon(R.mipmap.ic_launcher)
+        return mBuilder
+            .setPriority(PRIORITY_LOW)
+            .setCategory(Notification.CATEGORY_SERVICE)
+            .build()
+    }
+
+    @NonNull
+    @TargetApi(26)
+    @Synchronized
+    private fun createChannel(): String {
+        val mNotificationManager: NotificationManager =
+            this.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        val name = "fake_audio_channel"
+        val mChannel = NotificationChannel(name, name, NotificationManager.IMPORTANCE_LOW)
+        if (mNotificationManager != null) {
+            mNotificationManager.createNotificationChannel(mChannel)
+        } else {
+            stopSelf()
+        }
+        return name;
     }
 
     @MainThread
@@ -375,10 +448,14 @@ class MusicService : HeadlessJsTaskService() {
             event.notificationStateChange.collect {
                 when (it) {
                     is NotificationState.POSTED -> {
-                        startForeground(it.notificationId, it.notification)
+                        if (isForeground && it.notificationId == MUSIC_NOTIFICATION_ID) {
+                            startForeground(it.notificationId, it.notification)
+                        }
                     }
                     is NotificationState.CANCELLED -> {
-                        stopForeground(true)
+                        if (isForeground && it.notificationId == MUSIC_NOTIFICATION_ID) {
+                            stopForeground(true)
+                        }
                     }
                 }
             }
