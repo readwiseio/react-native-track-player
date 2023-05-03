@@ -1,9 +1,14 @@
 package com.doublesymmetry.trackplayer.module
 
 import android.content.*
+import android.os.Build
 import android.os.Bundle
 import android.os.IBinder
 import android.support.v4.media.RatingCompat
+import androidx.annotation.RequiresApi
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleObserver
+import androidx.lifecycle.OnLifecycleEvent
 import androidx.localbroadcastmanager.content.LocalBroadcastManager
 import com.doublesymmetry.kotlinaudio.models.Capability
 import com.doublesymmetry.kotlinaudio.models.RepeatMode
@@ -27,12 +32,14 @@ import javax.annotation.Nonnull
 /**
  * @author Milen Pivchev @mpivchev
  */
-class MusicModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaModule(reactContext), ServiceConnection {
+class MusicModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaModule(reactContext), ServiceConnection,
+    LifecycleObserver {
     private var eventHandler: MusicEvents? = null
     private var playerOptions: Bundle? = null
     private var isServiceBound = false
     private var playerSetUpPromise: Promise? = null
     private val scope = MainScope()
+    private var isForeground = false
 
     private lateinit var musicService: MusicService
 
@@ -127,6 +134,18 @@ class MusicModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaM
         return constants
     }
 
+    @OnLifecycleEvent(Lifecycle.Event.ON_STOP)
+    fun onAppBackgrounded() {
+        //App in background
+        isForeground = false
+    }
+
+    @OnLifecycleEvent(Lifecycle.Event.ON_START)
+    fun onAppForegrounded() {
+        // App in foreground
+        isForeground = true
+    }
+
     @ReactMethod
     fun setupPlayer(data: ReadableMap?, promise: Promise) {
         if (isServiceBound) {
@@ -179,9 +198,20 @@ class MusicModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaM
         val manager = LocalBroadcastManager.getInstance(context)
         eventHandler = MusicEvents(context)
         manager.registerReceiver(eventHandler!!, IntentFilter(EVENT_INTENT))
-
         Intent(context, MusicService::class.java).also { intent ->
-            context.startService(intent)
+            try {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    if (isForeground) {
+                        // prevent crash Fatal Exception: android.app.RemoteServiceException$ForegroundServiceDidNotStartInTimeException
+                        context.startForegroundService(intent)
+                    }
+                } else {
+                    context.startService(intent)
+                }
+            } catch (e: Exception) {
+                e.printStackTrace();
+            }
+            
             context.bindService(intent, this, Context.BIND_AUTO_CREATE)
         }
     }
