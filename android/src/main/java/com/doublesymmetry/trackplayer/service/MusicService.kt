@@ -15,9 +15,9 @@ import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationCompat.PRIORITY_LOW
 import androidx.lifecycle.*
 import androidx.localbroadcastmanager.content.LocalBroadcastManager
-import com.doublesymmetry.kotlinaudio.models.*
-import com.doublesymmetry.kotlinaudio.models.NotificationButton.*
-import com.doublesymmetry.kotlinaudio.players.QueuedAudioPlayer
+import com.readwise.kotlinaudio.models.*
+import com.readwise.kotlinaudio.models.NotificationButton.*
+import com.readwise.kotlinaudio.players.QueuedAudioPlayer
 import com.doublesymmetry.trackplayer.R
 import com.doublesymmetry.trackplayer.extensions.NumberExt.Companion.toMilliseconds
 import com.doublesymmetry.trackplayer.extensions.NumberExt.Companion.toSeconds
@@ -254,12 +254,12 @@ class MusicService : HeadlessJsTaskService(), LifecycleObserver {
 
     // SOURCE: https://github.com/doublesymmetry/react-native-track-player/issues/1666#issuecomment-1481534212
     private fun getNotification(): Notification? {
-        val channel: String = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) createChannel() else {
+        val channel: String =
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) createChannel() else {
                 ""
             }
         val mBuilder =
             NotificationCompat.Builder(this, channel)
-                .setSmallIcon(R.mipmap.ic_launcher)
         return mBuilder
             .setPriority(PRIORITY_LOW)
             .setCategory(Notification.CATEGORY_SERVICE)

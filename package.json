@@ -69,9 +69,9 @@
     "url": "https://github.com/readwiseio/react-native-track-player/issues"
   },
   "peerDependencies": {
-    "react": ">=16.8.6",
-    "react-native": ">=0.60.0-rc.2",
-    "react-native-windows": ">=0.63.0"
+    "react": "17.0.2",
+    "react-native": "0.68.7",
+    "react-native-windows": "0.68.7"
   },
   "peerDependenciesMeta": {
     "react-native-windows": {
@@ -79,7 +79,8 @@
     }
   },
   "devDependencies": {
-    "@types/react-native": "^0.64.5",
+    "@types/react-native": "^0.68.7",
+    "@types/react": "17.0.2",
     "@typescript-eslint/eslint-plugin": "^5.36.0",
     "@typescript-eslint/parser": "^5.36.0",
     "conventional-changelog-cli": "^2.2.2",
