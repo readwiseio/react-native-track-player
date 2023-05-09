@@ -49,7 +49,7 @@ repositories {
 }
 
 dependencies {
-    implementation 'com.github.readwiseio:KotlinAudio:1ad3dfe'
+    implementation 'com.github.readwiseio:KotlinAudio:08619fb'
 
     //noinspection GradleDynamicVersion
     implementation "com.facebook.react:react-native:+"
