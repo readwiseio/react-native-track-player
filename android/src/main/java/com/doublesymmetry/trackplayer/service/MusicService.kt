@@ -259,7 +259,6 @@ class MusicService : HeadlessJsTaskService(), LifecycleObserver {
             }
         val mBuilder =
             NotificationCompat.Builder(this, channel)
-                .setSmallIcon(R.mipmap.ic_launcher)
         return mBuilder
             .setPriority(PRIORITY_LOW)
             .setCategory(Notification.CATEGORY_SERVICE)
