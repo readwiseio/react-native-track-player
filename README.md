@@ -1,3 +1,9 @@
+# Readwise
+
+The latest branch we're using is `artem/ios_v4`.
+
+---
+
 <img src="https://react-native-track-player.js.org/img/optimized-logo.svg" width="300" />
 
 [![downloads](https://img.shields.io/npm/dw/react-native-track-player.svg)](https://www.npmjs.com/package/react-native-track-player)
